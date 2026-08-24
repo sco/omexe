@@ -1,6 +1,8 @@
-# Omexe: Control your Exe VMs from your Omarchy Bar
+# omexe (exe for omarchy)
 
 A compact, keyboard-first [Omarchy](https://omarchy.org) bar plugin for working with [Exe](https://exe.dev) VMs.
+
+![omexe preview](https://omexe.dev/preview.png)
 
 [Watch the video](https://youtu.be/LO7UsEX0iOI)
 
