@@ -38,22 +38,45 @@ Item {
   signal vmCreated(var vm, bool promptPending)
   signal operationFailed(string operation, string message)
 
-  readonly property string apiScript: "token=$(secret-tool lookup service exe.dev application sco.omexe 2>/dev/null) || exit 77; [ -n \"$token\" ] || exit 77; printf 'Authorization: Bearer %s\\n' \"$token\" | curl --fail-with-body --silent --show-error --request POST --header @- --data-binary \"$1\" https://exe.dev/exec"
+  readonly property int remoteStdoutLimitBytes: 262144
+  readonly property int remoteStderrLimitBytes: 65536
+  readonly property int probeDeadlineSec: 15
+  readonly property int operationDeadlineSec: 120
+  readonly property int shelleyDeadlineSec: 45
+
+  readonly property string apiScript: "token=$(secret-tool lookup service exe.dev application sco.omexe 2>/dev/null) || exit 77; [ -n \"$token\" ] || exit 77; max_time=$2; case $max_time in ''|*[!0-9]*) exit 64;; esac; printf 'Authorization: Bearer %s\\n' \"$token\" | /usr/bin/curl --fail-with-body --silent --show-error --max-time \"$max_time\" --max-filesize \"$3\" --request POST --header @- --data-binary \"$1\" https://exe.dev/exec"
 
   function shellCommand(args) {
     return args.map(function(value) { return Util.shellQuote(String(value)) }).join(" ")
   }
 
-  function sshCommand(args) {
-    return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", "-o", "ConnectionAttempts=1", "exe.dev", shellCommand(args)]
+  function boundedCommand(command, deadlineSec) {
+    var deadline = Math.max(1, Math.min(300, parseInt(String(deadlineSec), 10) || operationDeadlineSec))
+    var stdoutBlocks = Math.ceil(remoteStdoutLimitBytes / 4096)
+    var stderrBlocks = Math.ceil(remoteStderrLimitBytes / 4096)
+    var script = "set +e; umask 077; tmp=$(/usr/bin/mktemp -d) || exit 70; trap '/bin/rm -rf \"$tmp\"' EXIT HUP INT TERM; /usr/bin/mkfifo \"$tmp/out\" \"$tmp/err\" || exit 70; limiter_script='/usr/bin/dd bs=4096 count=\"$1\" iflag=fullblock status=none; extra=$(/usr/bin/dd bs=1 count=1 status=none | /usr/bin/wc -c); [ \"$extra\" -eq 0 ] || exit 98'; /usr/bin/setsid /usr/bin/bash --noprofile --norc -p -c \"$limiter_script\" limiter " + stdoutBlocks + " <\"$tmp/out\" & out_pid=$!; /usr/bin/setsid /usr/bin/bash --noprofile --norc -p -c \"$limiter_script\" limiter " + stderrBlocks + " <\"$tmp/err\" >&2 & err_pid=$!; /usr/bin/setsid \"$@\" >\"$tmp/out\" 2>\"$tmp/err\" & command_pid=$!; watchdog_script='/usr/bin/sleep \"$1\"; : >\"$2\"; kill -TERM -- -\"$3\" 2>/dev/null; /usr/bin/sleep 2; kill -KILL -- -\"$3\" 2>/dev/null'; /usr/bin/setsid /usr/bin/bash --noprofile --norc -p -c \"$watchdog_script\" watchdog " + deadline + " \"$tmp/timed-out\" \"$command_pid\" & timer_pid=$!; wait \"$command_pid\"; command_rc=$?; kill -TERM -- -\"$timer_pid\" 2>/dev/null; /usr/bin/sleep 0.05; kill -KILL -- -\"$timer_pid\" 2>/dev/null; wait \"$timer_pid\" 2>/dev/null; kill -TERM -- -\"$command_pid\" 2>/dev/null; /usr/bin/sleep 0.05; kill -KILL -- -\"$command_pid\" 2>/dev/null; [ -e \"$tmp/timed-out\" ] && command_rc=124; remaining=40; while { kill -0 \"$out_pid\" 2>/dev/null || kill -0 \"$err_pid\" 2>/dev/null; } && [ \"$remaining\" -gt 0 ]; do /usr/bin/sleep 0.05; remaining=$((remaining - 1)); done; out_stuck=0; err_stuck=0; kill -0 \"$out_pid\" 2>/dev/null && { out_stuck=1; kill -TERM -- -\"$out_pid\" 2>/dev/null; }; kill -0 \"$err_pid\" 2>/dev/null && { err_stuck=1; kill -TERM -- -\"$err_pid\" 2>/dev/null; }; /usr/bin/sleep 0.05; [ \"$out_stuck\" -eq 1 ] && kill -KILL -- -\"$out_pid\" 2>/dev/null; [ \"$err_stuck\" -eq 1 ] && kill -KILL -- -\"$err_pid\" 2>/dev/null; wait \"$out_pid\" 2>/dev/null; out_rc=$?; wait \"$err_pid\" 2>/dev/null; err_rc=$?; [ \"$out_stuck\" -eq 1 ] && out_rc=99; [ \"$err_stuck\" -eq 1 ] && err_rc=99; if [ \"$out_rc\" -eq 98 ] || [ \"$err_rc\" -eq 98 ]; then exit 98; fi; if [ \"$out_rc\" -eq 99 ] || [ \"$err_rc\" -eq 99 ]; then exit 99; fi; exit \"$command_rc\""
+    return ["/usr/bin/env", "-u", "BASH_ENV", "PATH=/usr/local/bin:/usr/bin:/bin", "/usr/bin/bash", "--noprofile", "--norc", "-p", "-c", script, "omexe-bounded"].concat(command)
   }
 
-  function httpsCommand(args) {
-    return ["bash", "-lc", apiScript, "bash", shellCommand(args)]
+  function sshCommand(args, deadlineSec) {
+    var command = ["/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", "-o", "ConnectionAttempts=1", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2", "exe.dev", shellCommand(args)]
+    return boundedCommand(command, deadlineSec)
   }
 
-  function commandFor(transport, args) {
-    return transport === "ssh" ? sshCommand(args) : httpsCommand(args)
+  function httpsCommand(args, deadlineSec) {
+    var deadline = Math.max(1, Math.min(300, parseInt(String(deadlineSec), 10) || operationDeadlineSec))
+    var transferDeadline = Math.max(1, deadline - 2)
+    var command = ["/usr/bin/env", "-u", "BASH_ENV", "PATH=/usr/local/bin:/usr/bin:/bin", "/usr/bin/bash", "--noprofile", "--norc", "-p", "-c", apiScript, "bash", shellCommand(args), String(transferDeadline), String(remoteStdoutLimitBytes)]
+    return boundedCommand(command, deadline)
+  }
+
+  function commandFor(transport, args, deadlineSec) {
+    return transport === "ssh" ? sshCommand(args, deadlineSec) : httpsCommand(args, deadlineSec)
+  }
+
+  function appendCapped(current, value, limit) {
+    var combined = String(current || "") + String(value || "")
+    return combined.length > limit ? combined.substring(0, limit) : combined
   }
 
   function compact(value, fallback) {
@@ -129,7 +152,7 @@ Item {
     outputBuffer = ""
     errorBuffer = ""
     activeTransport = transport
-    process.command = commandFor(transport, args)
+    process.command = commandFor(transport, args, operationDeadlineSec)
     process.running = true
     return true
   }
@@ -138,7 +161,7 @@ Item {
     activeTransport = "https"
     outputBuffer = ""
     errorBuffer = ""
-    process.command = httpsCommand(operationArgs)
+    process.command = httpsCommand(operationArgs, operationDeadlineSec)
     process.running = true
   }
 
@@ -240,7 +263,7 @@ Item {
     shelleyOutputBuffer = ""
     shelleyErrorBuffer = ""
     shelleyPromptRunning = true
-    shelleyPromptProcess.command = commandFor(transport, ["shelley", "prompt", shelleyPromptVmName, String(prompt)])
+    shelleyPromptProcess.command = commandFor(transport, ["shelley", "prompt", shelleyPromptVmName, String(prompt)], shelleyDeadlineSec)
     shelleyPromptProcess.running = true
     return true
   }
@@ -302,7 +325,7 @@ Item {
   Process {
     id: sshProbeProcess
     running: true
-    command: root.sshCommand(["whoami", "--json"])
+    command: root.sshCommand(["whoami", "--json"], root.probeDeadlineSec)
     stdout: StdioCollector { id: sshProbeOutput; waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
@@ -317,7 +340,7 @@ Item {
   Process {
     id: tokenProbeProcess
     running: true
-    command: root.httpsCommand(["whoami", "--json"])
+    command: root.httpsCommand(["whoami", "--json"], root.probeDeadlineSec)
     stdout: StdioCollector { id: tokenProbeOutput; waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
@@ -336,8 +359,8 @@ Item {
       var lifetime = Math.max(1, Math.min(365, parseInt(String(root.tokenLifetimeDays), 10) || 90))
       var removeCommand = Util.shellQuote("ssh-key remove omexe")
       var mintCommand = Util.shellQuote("ssh-key generate-api-key --label=omexe '--cmds=ls,new,cp,rm,restart,whoami,share show,share set-public,share set-private,shelley prompt' --exp=" + lifetime + "d")
-      var script = "set -e; ssh -o BatchMode=yes -o ConnectTimeout=8 exe.dev " + removeCommand + " >/dev/null 2>&1 || true; token=$(ssh -o BatchMode=yes -o ConnectTimeout=8 exe.dev " + mintCommand + " | grep -oE 'exe[01]\\.[A-Za-z0-9._-]+' | tail -1); [ -n \"$token\" ]; printf %s \"$token\" | secret-tool store --label='exe.dev Omexe plugin' service exe.dev application sco.omexe"
-      return ["bash", "-lc", script]
+      var script = "set -e -o pipefail; /usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=8 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 exe.dev " + removeCommand + " >/dev/null 2>&1 || true; token=$(/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=8 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 exe.dev " + mintCommand + " | /usr/bin/head -c " + root.remoteStdoutLimitBytes + " | /usr/bin/grep -oE 'exe[01]\\.[A-Za-z0-9._-]+' | /usr/bin/tail -1); [ -n \"$token\" ]; printf %s \"$token\" | secret-tool store --label='exe.dev Omexe plugin' service exe.dev application sco.omexe"
+      return root.boundedCommand(["/usr/bin/env", "-u", "BASH_ENV", "PATH=/usr/local/bin:/usr/bin:/bin", "/usr/bin/bash", "--noprofile", "--norc", "-p", "-c", script], 30)
     }
     onExited: function(exitCode) {
       if (exitCode === 0 && !tokenProbeProcess.running) tokenProbeProcess.running = true
@@ -353,13 +376,13 @@ Item {
     command: []
     stdout: SplitParser {
       onRead: function(line) {
-        root.shelleyOutputBuffer += String(line) + "\n"
+        root.shelleyOutputBuffer = root.appendCapped(root.shelleyOutputBuffer, String(line) + "\n", root.remoteStdoutLimitBytes)
         if (String(line).trim() !== "") root.shelleyPromptStatus = root.compact(line, root.shelleyPromptStatus)
       }
     }
     stderr: SplitParser {
       onRead: function(line) {
-        root.shelleyErrorBuffer += String(line) + "\n"
+        root.shelleyErrorBuffer = root.appendCapped(root.shelleyErrorBuffer, String(line) + "\n", root.remoteStderrLimitBytes)
         if (String(line).trim() !== "") root.shelleyPromptStatus = root.compact(line, root.shelleyPromptStatus)
       }
     }
@@ -369,7 +392,7 @@ Item {
         root.shelleyPromptStatus = "Prompt sent — open Shelley to follow along"
         root.showStatus("Prompt sent to Shelley")
       } else {
-        root.shelleyPromptStatus = "Prompt delivery failed — open Shelley to retry"
+        root.shelleyPromptStatus = "Prompt delivery uncertain — open Shelley to check before retrying"
         root.lastError = root.friendlyFailure("shelley", root.shelleyOutputBuffer || root.shelleyErrorBuffer)
       }
     }
@@ -381,14 +404,14 @@ Item {
     command: []
     stdout: SplitParser {
       onRead: function(line) {
-        root.outputBuffer += String(line) + "\n"
+        root.outputBuffer = root.appendCapped(root.outputBuffer, String(line) + "\n", root.remoteStdoutLimitBytes)
         if (root.operation === "create" && String(line).trim() !== "" && String(line).trim().charAt(0) !== "{")
           root.creationProgress = root.compact(line, root.creationProgress)
       }
     }
     stderr: SplitParser {
       onRead: function(line) {
-        root.errorBuffer += String(line) + "\n"
+        root.errorBuffer = root.appendCapped(root.errorBuffer, String(line) + "\n", root.remoteStderrLimitBytes)
         if (root.operation === "create" && String(line).trim() !== "") root.creationProgress = root.compact(line, root.creationProgress)
       }
     }
@@ -398,6 +421,15 @@ Item {
       var error = root.errorBuffer.trim()
       root.refreshing = false
       root.actionStatus = ""
+
+      var boundedFailure = exitCode === 98 || exitCode === 99 || exitCode === 124 || exitCode === 137
+        || (root.activeTransport === "https" && [18, 28, 52, 55, 56, 63].indexOf(exitCode) !== -1)
+      if (root.operationMutation && boundedFailure) {
+        var uncertain = "The request was interrupted or exceeded its output or time limit. Refresh before retrying so this action is not duplicated."
+        root.lastError = currentOperation === "create" ? "" : uncertain
+        root.operationFailed(currentOperation, uncertain)
+        return
+      }
 
       if (exitCode === 255 && root.activeTransport === "ssh") {
         root.sshAvailable = false
