@@ -33,8 +33,7 @@ Panel {
   readonly property var accountMenuOptions: [
     { kind: "integrations", label: "Integrations" },
     { kind: "settings", label: "Settings" },
-    { kind: "usage", label: "Usage" },
-    { kind: "logout", label: "Log Out" }
+    { kind: "usage", label: "Usage" }
   ]
   readonly property color foreground: Color.popups.text
   readonly property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.62)
@@ -273,8 +272,7 @@ Panel {
     var paths = {
       integrations: "/integrations",
       settings: "/user",
-      usage: "/usage",
-      logout: "/logout"
+      usage: "/usage"
     }
     if (paths[kind]) Qt.openUrlExternally("https://exe.dev" + paths[kind])
     close()
@@ -444,7 +442,7 @@ Panel {
       Item {
         Icon {
           anchors.centerIn: parent
-          iconSize: Style.space(17)
+          iconSize: Style.space(15)
           color: button.foreground
         }
       }
@@ -521,7 +519,7 @@ Panel {
               fontFamily: root.fontFamily
               iconComponent: Component {
                 Icon {
-                  iconSize: Style.font.display
+                  iconSize: Math.max(1, Style.font.display - Style.space(2))
                   color: root.foreground
                 }
               }
@@ -530,7 +528,7 @@ Panel {
                   id: headerTabs
                   spacing: Style.space(2)
                   HeaderTab { tabIndex: 0; tab: "lobby"; svgPath: "M10,17.75a.74.74,0,0,1-.53-.22.75.75,0,0,1,0-1.06L13.94,12,9.47,7.53a.75.75,0,0,1,1.06-1.06l5,5a.75.75,0,0,1,0,1.06l-5,5A.74.74,0,0,1,10,17.75Z"; tooltipText: "Open SSH lobby" }
-                  HeaderTab { tabIndex: 1; tab: "new"; svgPath: "M19,11.25h-6.25V5a.75.75,0,0,0-1.5,0v6.25H5a.75.75,0,0,0,0,1.5h6.25V19a.75.75,0,0,0,1.5,0v-6.25H19a.75.75,0,0,0,0-1.5Z"; tooltipText: "New machine" }
+                  HeaderTab { tabIndex: 1; tab: "new"; svgPath: "M19,11.25h-6.25V5a.75.75,0,0,0-1.5,0v6.25H5a.75.75,0,0,0,0,1.5h6.25V19a.75.75,0,0,0,1.5,0v-6.25H19a.75.75,0,0,0,0-1.5Z"; tooltipText: "New machine"; label: "New" }
                   HeaderTab { tabIndex: 2; tab: "account"; svgPath: "M12,12.25A3.75,3.75,0,1,1,15.75,8.5,3.75,3.75,0,0,1,12,12.25Zm0-6A2.25,2.25,0,1,0,14.25,8.5,2.25,2.25,0,0,0,12,6.25ZM19,19.25a.76.76,0,0,1-.75-.75c0-1.95-1.06-3.25-6.25-3.25s-6.25,1.3-6.25,3.25a.75.75,0,0,1-1.5,0c0-4.75,5.43-4.75,7.75-4.75s7.75,0,7.75,4.75A.76.76,0,0,1,19,19.25Z"; tooltipText: "Account"; label: exe.username }
                 }
               }
@@ -1144,7 +1142,17 @@ Panel {
     property string label: ""
     readonly property bool selected: root.cursorActive && root.focusSection === "header" && root.headerIndex === tabIndex
 
-    implicitWidth: label === "" ? Style.space(28) : tabIcon.width + tabLabel.implicitWidth + Style.space(16)
+    function svgColor(value) {
+      var text = String(value)
+      // QColor includes alpha as #AARRGGBB. Keep only the theme RGB here;
+      // Image.opacity below handles muted-state alpha identically to QML text.
+      return /^#[0-9a-fA-F]{8}$/.test(text) ? ("#" + text.substring(3)) : text
+    }
+
+    // Keep every tab and Row offset on whole logical pixels. Text implicit
+    // widths are fractional, which otherwise shifts all following SVGs onto
+    // subpixels and makes their thin strokes look soft.
+    implicitWidth: label === "" ? Style.space(28) : Math.ceil(tabIcon.width + tabLabel.implicitWidth + Style.space(16))
     implicitHeight: Style.space(28)
     radius: 0
     color: selected ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.10) : (tabMouse.containsMouse ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.06) : "transparent")
@@ -1152,23 +1160,18 @@ Panel {
 
     Image {
       id: tabIcon
-      anchors.left: tabButton.label === "" ? undefined : parent.left
-      anchors.leftMargin: tabButton.label === "" ? 0 : Style.space(6)
-      anchors.horizontalCenter: tabButton.label === "" ? parent.horizontalCenter : undefined
-      anchors.verticalCenter: parent.verticalCenter
+      x: tabButton.label === "" ? Math.round((parent.width - width) / 2) : Style.space(6)
+      y: Math.round((parent.height - height) / 2)
       width: Style.font.icon
       height: width
-      source: "data:image/svg+xml;utf8," + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='" + String(tabButton.selected ? root.foreground : root.dim) + "'><path d='" + tabButton.svgPath + "'/></svg>")
-      sourceSize.width: width
-      sourceSize.height: height
+      source: "data:image/svg+xml;utf8," + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='" + tabButton.svgColor(root.foreground) + "'><path d='" + tabButton.svgPath + "'/></svg>")
+      opacity: 1
+      // Decode the SVG at physical resolution. A logical-pixel decode is
+      // upscaled by Qt on HiDPI outputs and is especially obvious on the plus.
+      sourceSize.width: Math.round(width * Screen.devicePixelRatio)
+      sourceSize.height: Math.round(height * Screen.devicePixelRatio)
       fillMode: Image.PreserveAspectFit
       smooth: true
-      layer.enabled: true
-      layer.effect: MultiEffect {
-        brightness: 1
-        colorization: 1
-        colorizationColor: tabButton.selected ? root.foreground : root.dim
-      }
     }
 
     Text {
@@ -1178,7 +1181,7 @@ Panel {
       anchors.leftMargin: Style.space(4)
       anchors.verticalCenter: parent.verticalCenter
       text: tabButton.label
-      color: tabButton.selected ? root.foreground : root.dim
+      color: root.foreground
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
     }
