@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "id": "sco.omexe",
+  "name": "omexe",
+  "version": "1.0.0",
+  "author": "Scott Raymond",
+  "license": "MIT",
+  "description": "Browse and manage exe.dev VMs from the Omarchy bar.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "exe.dev",
+    "description": "Browse exe.dev VMs, connect over SSH, and run common actions.",
+    "category": "Development",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalSec": 30,
+      "tokenLifetimeDays": 90
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 5,
+        "max": 3600,
+        "step": 5,
+        "defaultValue": 30
+      },
+      {
+        "key": "tokenLifetimeDays",
+        "type": "integer",
+        "label": "API token lifetime (days)",
+        "min": 1,
+        "max": 365,
+        "step": 1,
+        "defaultValue": 90
+      }
+    ]
+  }
+}
