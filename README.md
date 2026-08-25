@@ -4,7 +4,7 @@ A compact, keyboard-first [Omarchy](https://omarchy.org) bar plugin for working 
 
 [Screenshot](https://omexe.dev/preview.png)
 
-[Watch the video](https://youtu.be/LO7UsEX0iOI)
+[Watch the video](https://www.youtube.com/watch?v=ci1NsfgFLzY)
 
 ## Features
 
