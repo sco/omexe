@@ -2,7 +2,7 @@
 
 A compact, keyboard-first [Omarchy](https://omarchy.org) bar plugin for working with [Exe](https://exe.dev) VMs.
 
-[Screenshot](https://omexe.dev/preview.png)
+[![Omexe preview](preview.png)](preview.png)
 
 [Watch the video](https://www.youtube.com/watch?v=ci1NsfgFLzY)
 
