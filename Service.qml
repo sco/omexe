@@ -286,6 +286,17 @@ Item {
     })
   }
 
+  function copyPublicUrl(vmName) {
+    var name = String(vmName || "")
+    if (!name) return
+    var vm = vms.find(function(candidate) { return candidate.vm_name === name })
+    var url = vm && vm.https_url ? String(vm.https_url) : ("https://" + name + ".exe.xyz")
+    var script = "printf %s " + Util.shellQuote(url)
+      + " | wl-copy && notify-send --app-name=omexe "
+      + Util.shellQuote("Public URL copied") + " " + Util.shellQuote(url)
+    Quickshell.execDetached(["bash", "-c", script])
+  }
+
   function createdVmFrom(raw) {
     try {
       var parsed = JSON.parse(String(raw || "{}"))
@@ -452,7 +463,10 @@ Item {
         root.applyList(output)
       } else {
         root.lastError = ""
-        if (currentOperation === "visibility") root.updateVisibility(root.targetVmName, root.targetPublic)
+        if (currentOperation === "visibility") {
+          root.updateVisibility(root.targetVmName, root.targetPublic)
+          if (root.targetPublic) root.copyPublicUrl(root.targetVmName)
+        }
         if (currentOperation === "delete") root.vms = root.vms.filter(function(vm) { return vm.vm_name !== root.targetVmName })
         if (currentOperation === "create") {
           var created = root.createdVmFrom(output)

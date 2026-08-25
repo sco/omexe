@@ -476,16 +476,16 @@ Panel {
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(text) {
-        if (root.focusSection !== "vms") return
         var key = text.toLowerCase()
         var vm = root.selectedVm()
         if (key === "a") root.launchDirect("shelley")
         else if (key === "b" || key === "o") root.requiresAuth ? exe.openSignIn() : root.launchDirect("browser")
+        else if (key === ">") { exe.openLobby(); root.close() }
         else if (key === ".") root.openSelectedMenu()
         else if (key === "p" && vm) root.requestVisibility(vm)
         else if (key === "r" && vm) exe.restartVm(vm)
         else if (key === "c" && vm) root.requestCopy(vm)
-        else if (key === "n" && !root.requiresAuth) root.beginCreate()
+        else if ((key === "n" || key === "+") && !root.requiresAuth) root.beginCreate()
         else if (key === "f") exe.refresh()
       }
 

@@ -52,7 +52,8 @@ With the panel open:
 - `p`: public/private share toggle
 - `r`: restart VM
 - `c`: copy VM
-- `n`: new VM
+- `n` / `+`: new VM
+- `>`: open the Exe lobby
 - `f`: refresh the list
 
 
